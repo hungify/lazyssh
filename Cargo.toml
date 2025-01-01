@@ -1,0 +1,12 @@
+[package]
+name = "ssh"
+version = "0.1.0"
+authors = ["hungify"]
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+crossterm = "0.23"
+ratatui = "0.29.0"
+color-eyre = "0.6"
+dirs = "4.0"
