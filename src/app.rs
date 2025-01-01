@@ -76,20 +76,16 @@ impl App {
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let prefix = if file.contains(" - ") {
-                    format!("{}: ", i + 1)
+                let style = if i == self.selected_index {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else if file.contains(" - ") {
+                    Style::default()
                 } else {
-                    "".to_string()
+                    Style::default().fg(Color::DarkGray)
                 };
-                if i == self.selected_index {
-                    Line::from(format!("{}{}", prefix, file)).style(
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Line::from(format!("{}{}", prefix, file))
-                }
+                Line::from(file.to_string()).style(style)
             })
             .collect::<Vec<_>>();
 
