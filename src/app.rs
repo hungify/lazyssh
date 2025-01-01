@@ -1,3 +1,4 @@
+use color_eyre::owo_colors::OwoColorize;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dirs;
@@ -9,20 +10,53 @@ use ratatui::{
     widgets::{block::Position, Block, BorderType, Padding, Paragraph},
     DefaultTerminal, Frame,
 };
-use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::read_to_string;
 use std::process::Command;
 use trash::delete;
 
-#[derive(Debug, Default)]
+enum InputMode {
+    Normal,
+    Editing,
+}
+
 pub struct App {
     running: bool,
     selected_index: usize,
     ssh_files: Vec<String>,
-    show_keybinding: bool,
+    show_key_bindings: bool,
     show_confirm_delete: bool,
+    show_upsert_form: bool,
+    input_mode: InputMode,
+    new_key_name: String,
+    key_type: String,
+    key_bits: String,
+    passphrase: String,
+    input_index: usize,
+    key_types: Vec<&'static str>,
+    selected_key_type_index: usize,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            running: true,
+            selected_index: 0,
+            ssh_files: Vec::new(),
+            show_key_bindings: false,
+            show_confirm_delete: false,
+            show_upsert_form: false,
+            input_mode: InputMode::Normal,
+            new_key_name: String::new(),
+            key_type: String::new(),
+            key_bits: String::new(),
+            passphrase: String::new(),
+            input_index: 0,
+            key_types: vec!["rsa", "dsa", "ecdsa", "ed25519"],
+            selected_key_type_index: 0,
+        }
+    }
 }
 
 impl App {
@@ -53,12 +87,16 @@ impl App {
         self.render_ssh_content(frame, content_chunks[1]);
         self.render_footer(frame, main_chunks[1]);
 
-        if self.show_keybinding {
+        if self.show_key_bindings {
             self.render_key_bindings_popup(frame);
         }
 
         if self.show_confirm_delete {
             self.render_confirm_delete_popup(frame);
+        }
+
+        if self.show_upsert_form {
+            self.render_upsert_form(frame);
         }
     }
 
@@ -145,7 +183,7 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let footer_text = if self.show_keybinding {
+        let footer_text = if self.show_key_bindings {
             "Excute: <enter> | Close: <esc> | Keybindings: ? | Cancel: <esc>"
         } else {
             "Press `Esc`, `Ctrl-C` or `q` to quit. Use arrow keys to navigate. | Keybindings: ?"
@@ -317,7 +355,7 @@ impl App {
     }
 
     fn toggle_keybinding(&mut self) {
-        self.show_keybinding = !self.show_keybinding;
+        self.show_key_bindings = !self.show_key_bindings;
     }
 
     fn increase_selected_index(&mut self) {
@@ -344,7 +382,60 @@ impl App {
                 }
                 _ => {}
             }
-        } else if self.show_keybinding {
+        } else if self.show_upsert_form {
+            match key.code {
+                KeyCode::Enter => {
+                    self.create_ssh_key();
+                    self.toggle_upsert_form();
+                }
+                KeyCode::Esc => {
+                    self.toggle_upsert_form();
+                }
+                KeyCode::Tab => {
+                    self.input_index = (self.input_index + 1) % 4;
+                }
+                KeyCode::BackTab => {
+                    if self.input_index == 0 {
+                        self.input_index = 3;
+                    } else {
+                        self.input_index -= 1;
+                    }
+                }
+                KeyCode::Char(c) => match self.input_index {
+                    0 => self.new_key_name.push(c),
+                    2 => self.key_bits.push(c),
+                    3 => self.passphrase.push(c),
+                    _ => {}
+                },
+                KeyCode::Backspace => {
+                    match self.input_index {
+                        0 => self.new_key_name.pop(),
+                        2 => self.key_bits.pop(),
+                        3 => self.passphrase.pop(),
+                        _ => None,
+                    };
+                }
+                KeyCode::Up => {
+                    if self.input_index == 1 {
+                        if self.selected_key_type_index == 0 {
+                            self.selected_key_type_index = self.key_types.len() - 1;
+                        } else {
+                            self.selected_key_type_index -= 1;
+                        }
+                    }
+                }
+                KeyCode::Down => {
+                    if self.input_index == 1 {
+                        if self.selected_key_type_index == self.key_types.len() - 1 {
+                            self.selected_key_type_index = 0;
+                        } else {
+                            self.selected_key_type_index += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if self.show_key_bindings {
             match key.code {
                 KeyCode::Esc => self.toggle_keybinding(),
                 KeyCode::Char('d') => self.show_confirm_delete = true,
@@ -356,7 +447,7 @@ impl App {
                 (_, KeyCode::Char('c')) => self.toggle_keybinding(),
                 (_, KeyCode::Down) => self.increase_selected_index(),
                 (_, KeyCode::Up) => self.decrease_selected_index(),
-                (_, KeyCode::Char('n')) => self.create_ssh_key(),
+                (_, KeyCode::Char('n')) => self.toggle_upsert_form(),
                 (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
                 (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
                 _ => {}
@@ -379,6 +470,97 @@ impl App {
         self.running = false;
     }
 
+    fn toggle_upsert_form(&mut self) {
+        self.show_upsert_form = !self.show_upsert_form;
+    }
+
+    fn render_upsert_form(&self, frame: &mut Frame) {
+        let input_chunks = self.create_upsert_form_layout(frame.area());
+
+        let name_input = self.create_input_field("Name", &self.new_key_name, 0);
+        let type_input = self.create_select_field(
+            "Type (use arrow keys to change)",
+            &self.key_types,
+            self.selected_key_type_index,
+            1,
+        );
+        let bits_input = self.create_input_field("Bits", &self.key_bits, 2);
+        let passphrase_input = self.create_input_field("Passphrase", &self.passphrase, 3);
+
+        frame.render_widget(Clear, input_chunks[0]);
+        frame.render_widget(Clear, input_chunks[1]);
+        frame.render_widget(Clear, input_chunks[2]);
+        frame.render_widget(Clear, input_chunks[3]);
+
+        frame.render_widget(name_input, input_chunks[0]);
+        frame.render_widget(type_input, input_chunks[1]);
+        frame.render_widget(bits_input, input_chunks[2]);
+        frame.render_widget(passphrase_input, input_chunks[3]);
+    }
+
+    fn create_upsert_form_layout(&self, area: Rect) -> Vec<Rect> {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(Rect::new(
+                area.x + area.width / 4,
+                area.y + area.height / 4,
+                area.width / 2,
+                area.height / 2,
+            ))
+            .to_vec()
+    }
+
+    fn create_input_field<'a>(&self, title: &str, value: &'a str, index: usize) -> Paragraph<'a> {
+        Paragraph::new(value).block(
+            Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                })
+                .title(title.to_string())
+                .title_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                }),
+        )
+    }
+
+    fn create_select_field<'a>(
+        &self,
+        title: &str,
+        options: &[&'a str],
+        selected_index: usize,
+        index: usize,
+    ) -> Paragraph<'a> {
+        let selected_option = options[selected_index];
+        Paragraph::new(selected_option).block(
+            Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                })
+                .title(title.to_string())
+                .title_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                }),
+        )
+    }
+
     fn create_ssh_key(&mut self) {
         println!("Creating a new SSH key...");
     }
@@ -387,7 +569,7 @@ impl App {
         if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
             let path = ssh_dir.join(selected_file);
-            let output = Command::new("ssh-add")
+            Command::new("ssh-add")
                 .arg(path)
                 .output()
                 .expect("Failed to execute ssh-add");
