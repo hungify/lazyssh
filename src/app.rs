@@ -401,11 +401,21 @@ impl App {
     fn confirm_delete_ssh_key(&mut self) {
         if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let path = ssh_dir.join(selected_file);
+            let private_key_path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
+            let public_key_path = ssh_dir.join(format!("{}.pub", private_key_path.display()));
 
-            if delete(&path).is_ok() {
+            let private_key_deleted = delete(&private_key_path).is_ok();
+            let public_key_deleted = delete(&public_key_path).is_ok();
+
+            if private_key_deleted || public_key_deleted {
                 self.ssh_files.remove(self.selected_index);
                 self.selected_index = self.selected_index.saturating_sub(1);
+            } else {
+                let other_file_path = ssh_dir.join(selected_file);
+                if delete(&other_file_path).is_ok() {
+                    self.ssh_files.remove(self.selected_index);
+                    self.selected_index = self.selected_index.saturating_sub(1);
+                }
             }
         }
     }
