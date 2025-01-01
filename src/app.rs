@@ -1,6 +1,7 @@
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dirs;
+use ratatui::widgets::Clear;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Positions, Rect},
     style::{Color, Modifier, Style},
@@ -8,17 +9,20 @@ use ratatui::{
     widgets::{block::Position, Block, BorderType, Padding, Paragraph},
     DefaultTerminal, Frame,
 };
+use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::read_to_string;
 use std::process::Command;
+use trash::delete;
 
 #[derive(Debug, Default)]
 pub struct App {
     running: bool,
     selected_index: usize,
     ssh_files: Vec<String>,
-    show_help: bool,
+    show_keybinding: bool,
+    show_confirm_delete: bool,
 }
 
 impl App {
@@ -49,15 +53,19 @@ impl App {
         self.render_ssh_content(frame, content_chunks[1]);
         self.render_footer(frame, main_chunks[1]);
 
-        if self.show_help {
-            self.render_help_popup(frame);
+        if self.show_keybinding {
+            self.render_key_bindings_popup(frame);
+        }
+
+        if self.show_confirm_delete {
+            self.render_confirm_delete_popup(frame);
         }
     }
 
     fn create_main_layout(&self, area: Rect) -> Vec<Rect> {
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(90), Constraint::Percentage(10)].as_ref())
+            .constraints([Constraint::Percentage(93), Constraint::Percentage(7)].as_ref())
             .split(area)
             .to_vec()
     }
@@ -65,7 +73,7 @@ impl App {
     fn create_content_layout(&self, area: Rect) -> Vec<Rect> {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(25), Constraint::Percentage(75)].as_ref())
+            .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
             .split(area)
             .to_vec()
     }
@@ -137,8 +145,8 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let footer_text = if self.show_help {
-            "Press `Shift + ?` to close help."
+        let footer_text = if self.show_keybinding {
+            "Excute: <enter> | Close: <esc> | Keybindings: ? | Cancel: <esc>"
         } else {
             "Press `Esc`, `Ctrl-C` or `q` to quit. Use arrow keys to navigate. | Keybindings: ?"
         };
@@ -154,25 +162,65 @@ impl App {
         );
     }
 
-    fn render_help_popup(&self, frame: &mut Frame) {
-        let help_text = "Keybindings:\n\n\
-                         Arrow Up/Down: Navigate\n\
-                         Esc, Ctrl-C, q: Quit\n\
-                         Shift + ?: Show this help";
+    fn render_key_bindings_popup(&self, frame: &mut Frame) {
+        let title = Block::default()
+            .title("Key Bindings")
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Green));
+
+        let popup = Paragraph::new(vec![
+            Line::from("<n> Create a ssh key"),
+            Line::from("<d> Delete a ssh key"),
+            Line::from("<a> Add a ssh key to agent"),
+        ])
+        .block(title)
+        .alignment(Alignment::Left);
+
         let popup_area = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(30)].as_ref())
             .split(frame.area())[1];
 
-        frame.render_widget(
-            Paragraph::new(help_text).block(
-                Block::default()
-                    .borders(ratatui::widgets::Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("Help"),
-            ),
-            popup_area,
+        let popup_area = Rect::new(
+            popup_area.x + popup_area.width / 4,
+            popup_area.y / 2,
+            popup_area.width / 2,
+            popup_area.height,
         );
+
+        frame.render_widget(Clear, popup_area);
+        frame.render_widget(popup, popup_area);
+    }
+
+    fn render_confirm_delete_popup(&self, frame: &mut Frame) {
+        let title = Block::default()
+            .title("Confirm Delete")
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Red));
+
+        let popup = Paragraph::new(vec![
+            Line::from("Are you sure you want to delete this SSH key?"),
+            Line::from("Note: You can recover the key from the trash."),
+        ])
+        .block(title)
+        .alignment(Alignment::Left);
+
+        let popup_area = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(30)].as_ref())
+            .split(frame.area())[1];
+
+        let popup_area = Rect::new(
+            popup_area.x + popup_area.width / 3,
+            popup_area.y + popup_area.height / 4,
+            popup_area.width / 3,
+            popup_area.height / 3,
+        );
+
+        frame.render_widget(Clear, popup_area);
+        frame.render_widget(popup, popup_area);
     }
 
     fn load_ssh_files(&self) -> Vec<String> {
@@ -268,21 +316,51 @@ impl App {
         Ok(())
     }
 
+    fn toggle_keybinding(&mut self) {
+        self.show_keybinding = !self.show_keybinding;
+    }
+
+    fn increase_selected_index(&mut self) {
+        if self.selected_index < self.ssh_files.len().saturating_sub(1) {
+            self.selected_index += 1;
+        }
+    }
+
+    fn decrease_selected_index(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+        }
+    }
+
     fn on_key_event(&mut self, key: KeyEvent) {
-        match (key.modifiers, key.code) {
-            (_, KeyCode::Esc | KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
-            (_, KeyCode::Down) => {
-                if self.selected_index < self.ssh_files.len().saturating_sub(1) {
-                    self.selected_index += 1;
+        if self.show_confirm_delete {
+            match key.code {
+                KeyCode::Enter => {
+                    self.confirm_delete_ssh_key();
+                    self.toggle_confirm_delete();
                 }
-            }
-            (_, KeyCode::Up) => {
-                if self.selected_index > 0 {
-                    self.selected_index -= 1;
+                KeyCode::Esc => {
+                    self.toggle_confirm_delete();
                 }
+                _ => {}
             }
-            _ => {}
+        } else if self.show_keybinding {
+            match key.code {
+                KeyCode::Esc => self.toggle_keybinding(),
+                KeyCode::Char('d') => self.show_confirm_delete = true,
+                _ => {}
+            }
+        } else {
+            match (key.modifiers, key.code) {
+                (_, KeyCode::Esc | KeyCode::Char('q')) => self.quit(),
+                (_, KeyCode::Char('c')) => self.toggle_keybinding(),
+                (_, KeyCode::Down) => self.increase_selected_index(),
+                (_, KeyCode::Up) => self.decrease_selected_index(),
+                (_, KeyCode::Char('n')) => self.create_ssh_key(),
+                (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
+                (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
+                _ => {}
+            }
         }
     }
 
@@ -299,5 +377,36 @@ impl App {
 
     fn quit(&mut self) {
         self.running = false;
+    }
+
+    fn create_ssh_key(&mut self) {
+        println!("Creating a new SSH key...");
+    }
+
+    fn add_ssh_key_to_agent(&mut self) {
+        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+            let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
+            let path = ssh_dir.join(selected_file);
+            let output = Command::new("ssh-add")
+                .arg(path)
+                .output()
+                .expect("Failed to execute ssh-add");
+        }
+    }
+
+    fn toggle_confirm_delete(&mut self) {
+        self.show_confirm_delete = !self.show_confirm_delete;
+    }
+
+    fn confirm_delete_ssh_key(&mut self) {
+        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+            let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
+            let path = ssh_dir.join(selected_file);
+
+            if delete(&path).is_ok() {
+                self.ssh_files.remove(self.selected_index);
+                self.selected_index = self.selected_index.saturating_sub(1);
+            }
+        }
     }
 }
