@@ -1,4 +1,3 @@
-use color_eyre::owo_colors::OwoColorize;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dirs;
@@ -242,6 +241,8 @@ impl App {
             Line::from("<n> Create a SSH key"),
             Line::from("<d> Delete a SSH key"),
             Line::from("<a> Add a SSH key to agent"),
+            Line::from("<c> Copy a SSH public key to clipboard"),
+            Line::from("<q> Quit the application"),
         ])
         .block(title)
         .alignment(Alignment::Left);
