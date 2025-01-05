@@ -1,5 +1,5 @@
 [package]
-name = "ssh"
+name = "lazyssh"
 version = "0.1.0"
 authors = ["hungify"]
 license = "MIT"
