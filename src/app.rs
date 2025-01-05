@@ -1,28 +1,61 @@
+use color_eyre::owo_colors::OwoColorize;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dirs;
 use ratatui::widgets::Clear;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Margin, Positions, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{block::Position, Block, BorderType, Padding, Paragraph},
+    widgets::{Block, BorderType, Paragraph},
     DefaultTerminal, Frame,
 };
-use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::fs::read_to_string;
 use std::process::Command;
 use trash::delete;
 
-#[derive(Debug, Default)]
 pub struct App {
     running: bool,
     selected_index: usize,
     ssh_files: Vec<String>,
-    show_keybinding: bool,
+    show_key_bindings: bool,
     show_confirm_delete: bool,
+    show_create_form: bool,
+    new_key_name: String,
+    key_type: String,
+    key_bits: String,
+    passphrase: String,
+    input_index: usize,
+    key_types: Vec<&'static str>,
+    selected_key_type_index: usize,
+    bits_options: Vec<&'static str>,
+    selected_bits_index: usize,
+    comment: String,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            running: true,
+            selected_index: 0,
+            ssh_files: Vec::new(),
+            show_key_bindings: false,
+            show_confirm_delete: false,
+            show_create_form: false,
+            new_key_name: String::new(),
+            key_type: String::new(),
+            key_bits: String::new(),
+            passphrase: String::new(),
+            input_index: 0,
+            key_types: vec!["rsa", "dsa", "ecdsa", "ed25519"],
+            selected_key_type_index: 0,
+            bits_options: vec!["1024", "2048", "4096"],
+            selected_bits_index: 1, // Default to 2048
+            comment: String::new(),
+        }
+    }
 }
 
 impl App {
@@ -53,12 +86,16 @@ impl App {
         self.render_ssh_content(frame, content_chunks[1]);
         self.render_footer(frame, main_chunks[1]);
 
-        if self.show_keybinding {
+        if self.show_key_bindings {
             self.render_key_bindings_popup(frame);
         }
 
         if self.show_confirm_delete {
             self.render_confirm_delete_popup(frame);
+        }
+
+        if self.show_create_form {
+            self.render_create_form(frame);
         }
     }
 
@@ -145,8 +182,8 @@ impl App {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let footer_text = if self.show_keybinding {
-            "Excute: <enter> | Close: <esc> | Keybindings: ? | Cancel: <esc>"
+        let footer_text = if self.show_key_bindings {
+            "Execute: <enter> | Close: <esc> | Keybindings: ? | Cancel: <esc>"
         } else {
             "Press `Esc`, `Ctrl-C` or `q` to quit. Use arrow keys to navigate. | Keybindings: ?"
         };
@@ -170,9 +207,9 @@ impl App {
             .border_style(Style::default().fg(Color::Green));
 
         let popup = Paragraph::new(vec![
-            Line::from("<n> Create a ssh key"),
-            Line::from("<d> Delete a ssh key"),
-            Line::from("<a> Add a ssh key to agent"),
+            Line::from("<n> Create a SSH key"),
+            Line::from("<d> Delete a SSH key"),
+            Line::from("<a> Add a SSH key to agent"),
         ])
         .block(title)
         .alignment(Alignment::Left);
@@ -317,7 +354,7 @@ impl App {
     }
 
     fn toggle_keybinding(&mut self) {
-        self.show_keybinding = !self.show_keybinding;
+        self.show_key_bindings = !self.show_key_bindings;
     }
 
     fn increase_selected_index(&mut self) {
@@ -334,33 +371,147 @@ impl App {
 
     fn on_key_event(&mut self, key: KeyEvent) {
         if self.show_confirm_delete {
-            match key.code {
-                KeyCode::Enter => {
-                    self.confirm_delete_ssh_key();
-                    self.toggle_confirm_delete();
+            self.handle_confirm_delete_key_event(key);
+            return;
+        }
+
+        if self.show_create_form {
+            self.handle_create_form_key_event(key);
+            return;
+        }
+
+        if self.show_key_bindings {
+            self.handle_key_bindings_key_event(key);
+            return;
+        }
+
+        self.handle_general_key_event(key);
+    }
+
+    fn handle_confirm_delete_key_event(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                self.confirm_delete_ssh_key();
+                self.toggle_confirm_delete();
+            }
+            KeyCode::Esc => {
+                self.toggle_confirm_delete();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_create_form_key_event(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                self.create_ssh_key();
+                self.toggle_create_form();
+            }
+            KeyCode::Esc => {
+                self.toggle_create_form();
+            }
+            KeyCode::Tab => {
+                self.input_index = (self.input_index + 1) % 5;
+            }
+            KeyCode::BackTab => {
+                if self.input_index == 0 {
+                    self.input_index = 4;
+                } else {
+                    self.input_index -= 1;
                 }
-                KeyCode::Esc => {
-                    self.toggle_confirm_delete();
+            }
+            KeyCode::Char(c) => match self.input_index {
+                0 => self.new_key_name.push(c),
+                3 => self.passphrase.push(c),
+                4 => self.comment.push(c),
+                _ => {}
+            },
+            KeyCode::Backspace => {
+                match self.input_index {
+                    0 => {
+                        self.new_key_name.pop();
+                    }
+                    3 => {
+                        self.passphrase.pop();
+                    }
+                    4 => {
+                        self.comment.pop();
+                    }
+                    _ => {}
+                };
+            }
+            KeyCode::Delete => {
+                match self.input_index {
+                    0 => {
+                        self.new_key_name.clear();
+                    }
+                    3 => {
+                        self.passphrase.clear();
+                    }
+                    4 => {
+                        self.comment.clear();
+                    }
+                    _ => {}
+                };
+            }
+            KeyCode::Up => {
+                if self.input_index == 1 {
+                    self.selected_key_type_index = if self.selected_key_type_index == 0 {
+                        self.key_types.len() - 1
+                    } else {
+                        self.selected_key_type_index - 1
+                    };
+                } else if self.input_index == 2 {
+                    self.selected_bits_index = if self.selected_bits_index == 0 {
+                        self.bits_options.len() - 1
+                    } else {
+                        self.selected_bits_index - 1
+                    };
                 }
-                _ => {}
             }
-        } else if self.show_keybinding {
-            match key.code {
-                KeyCode::Esc => self.toggle_keybinding(),
-                KeyCode::Char('d') => self.show_confirm_delete = true,
-                _ => {}
+            KeyCode::Down => {
+                if self.input_index == 1 {
+                    self.selected_key_type_index =
+                        if self.selected_key_type_index == self.key_types.len() - 1 {
+                            0
+                        } else {
+                            self.selected_key_type_index + 1
+                        };
+                } else if self.input_index == 2 {
+                    self.selected_bits_index =
+                        if self.selected_bits_index == self.bits_options.len() - 1 {
+                            0
+                        } else {
+                            self.selected_bits_index + 1
+                        };
+                }
             }
-        } else {
-            match (key.modifiers, key.code) {
-                (_, KeyCode::Esc | KeyCode::Char('q')) => self.quit(),
-                (_, KeyCode::Char('c')) => self.toggle_keybinding(),
-                (_, KeyCode::Down) => self.increase_selected_index(),
-                (_, KeyCode::Up) => self.decrease_selected_index(),
-                (_, KeyCode::Char('n')) => self.create_ssh_key(),
-                (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
-                (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
-                _ => {}
+            _ => {}
+        }
+    }
+
+    fn handle_key_bindings_key_event(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.toggle_keybinding();
             }
+            KeyCode::Char('d') => {
+                self.show_confirm_delete = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_general_key_event(&mut self, key: KeyEvent) {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Esc | KeyCode::Char('q')) => self.quit(),
+            (_, KeyCode::Char('c')) => self.toggle_keybinding(),
+            (_, KeyCode::Down) => self.increase_selected_index(),
+            (_, KeyCode::Up) => self.decrease_selected_index(),
+            (_, KeyCode::Char('n')) => self.toggle_create_form(),
+            (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
+            (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
+            _ => {}
         }
     }
 
@@ -379,15 +530,151 @@ impl App {
         self.running = false;
     }
 
+    fn toggle_create_form(&mut self) {
+        self.show_create_form = !self.show_create_form;
+    }
+
+    fn render_create_form(&self, frame: &mut Frame) {
+        let input_chunks = self.create_form_layout(frame.area());
+
+        let name_input = self.create_input_field("Name", &self.new_key_name, 0);
+        let type_input = self.create_select_field(
+            "Type (use arrow keys to change)",
+            &self.key_types,
+            self.selected_key_type_index,
+            1,
+        );
+        let bits_input = self.create_select_field(
+            "Bits (use arrow keys to change)",
+            &self.bits_options,
+            self.selected_bits_index,
+            2,
+        );
+        let passphrase_input = self.create_input_field("Passphrase", &self.passphrase, 3);
+        let comment_input = self.create_input_field("Comment", &self.comment, 4);
+
+        frame.render_widget(Clear, input_chunks[0]);
+        frame.render_widget(Clear, input_chunks[1]);
+        frame.render_widget(Clear, input_chunks[2]);
+        frame.render_widget(Clear, input_chunks[3]);
+        frame.render_widget(Clear, input_chunks[4]);
+
+        frame.render_widget(name_input, input_chunks[0]);
+        frame.render_widget(type_input, input_chunks[1]);
+        frame.render_widget(bits_input, input_chunks[2]);
+        frame.render_widget(passphrase_input, input_chunks[3]);
+        frame.render_widget(comment_input, input_chunks[4]);
+    }
+
+    fn create_form_layout(&self, area: Rect) -> Vec<Rect> {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(Rect::new(
+                area.x + area.width / 4,
+                area.y + area.height / 4,
+                area.width / 2,
+                area.height / 2,
+            ))
+            .to_vec()
+    }
+
+    fn create_input_field<'a>(&self, title: &str, value: &'a str, index: usize) -> Paragraph<'a> {
+        Paragraph::new(value).block(
+            Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                })
+                .title(title.to_string())
+                .title_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                }),
+        )
+    }
+
+    fn create_select_field<'a>(
+        &self,
+        title: &str,
+        options: &[&'a str],
+        selected_index: usize,
+        index: usize,
+    ) -> Paragraph<'a> {
+        let selected_option = options[selected_index];
+        Paragraph::new(selected_option).block(
+            Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                })
+                .title(title.to_string())
+                .title_style(if self.input_index == index {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                }),
+        )
+    }
+
     fn create_ssh_key(&mut self) {
-        println!("Creating a new SSH key...");
+        let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
+        let key_path = ssh_dir.join(&self.new_key_name);
+        let key_type = &self.key_types[self.selected_key_type_index];
+        let key_bits = self.bits_options[self.selected_bits_index];
+
+        let output = Command::new("ssh-keygen")
+            .arg("-t")
+            .arg(key_type)
+            .arg("-b")
+            .arg(key_bits)
+            .arg("-f")
+            .arg(key_path)
+            .arg("-N")
+            .arg(&self.passphrase)
+            .arg("-C")
+            .arg(&self.comment)
+            .output()
+            .expect("Failed to execute ssh-keygen");
+
+        if output.status.success() {
+            self.ssh_files = self.load_ssh_files();
+            self.selected_index = 0;
+            self.clear_input_fields();
+        } else {
+            eprintln!(
+                "Failed to create SSH key: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    fn clear_input_fields(&mut self) {
+        self.new_key_name.clear();
+        self.key_type.clear();
+        self.key_bits.clear();
+        self.passphrase.clear();
+        self.comment.clear();
     }
 
     fn add_ssh_key_to_agent(&mut self) {
         if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
             let path = ssh_dir.join(selected_file);
-            let output = Command::new("ssh-add")
+            Command::new("ssh-add")
                 .arg(path)
                 .output()
                 .expect("Failed to execute ssh-add");
