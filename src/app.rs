@@ -712,8 +712,16 @@ impl App {
 
     fn add_ssh_key_to_agent(&mut self) {
         if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+            if !selected_file.contains(" - ") {
+                self.command_log.push(format!(
+                    "Cannot add: {} is not a private key file of an SSH pair",
+                    selected_file
+                ));
+                return;
+            }
+
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let path = ssh_dir.join(selected_file);
+            let path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
             let output = Command::new("ssh-add")
                 .arg(&path)
                 .output()
