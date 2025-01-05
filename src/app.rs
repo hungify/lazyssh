@@ -33,6 +33,7 @@ pub struct App {
     bits_options: Vec<&'static str>,
     selected_bits_index: usize,
     comment: String,
+    command_log: Vec<String>,
 }
 
 impl Default for App {
@@ -52,8 +53,9 @@ impl Default for App {
             key_types: vec!["rsa", "dsa", "ecdsa", "ed25519"],
             selected_key_type_index: 0,
             bits_options: vec!["1024", "2048", "4096"],
-            selected_bits_index: 1, // Default to 2048
+            selected_bits_index: 1,
             comment: String::new(),
+            command_log: Vec::new(),
         }
     }
 }
@@ -81,9 +83,12 @@ impl App {
 
         let main_chunks = self.create_main_layout(area);
         let content_chunks = self.create_content_layout(main_chunks[0]);
+        let right_chunks = self.create_right_layout(content_chunks[1]);
 
         self.render_ssh_files(frame, content_chunks[0]);
-        self.render_ssh_content(frame, content_chunks[1]);
+        self.render_ssh_content(frame, right_chunks[0]);
+        self.render_ssh_agent_status(frame, right_chunks[1]);
+        self.render_command_log(frame, right_chunks[2]);
         self.render_footer(frame, main_chunks[1]);
 
         if self.show_key_bindings {
@@ -111,6 +116,18 @@ impl App {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
+            .split(area)
+            .to_vec()
+    }
+
+    fn create_right_layout(&self, area: Rect) -> Vec<Rect> {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(60),
+                Constraint::Percentage(7),
+                Constraint::Percentage(33),
+            ])
             .split(area)
             .to_vec()
     }
@@ -151,11 +168,6 @@ impl App {
     }
 
     fn render_ssh_content(&self, frame: &mut Frame, area: Rect) {
-        let right_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(80), Constraint::Percentage(20)].as_ref())
-            .split(area);
-
         let ssh_content = self.load_ssh_content();
         frame.render_widget(
             Paragraph::new(ssh_content).block(
@@ -165,9 +177,11 @@ impl App {
                     .title("SSH Content")
                     .title_alignment(Alignment::Center),
             ),
-            right_chunks[0],
+            area,
         );
+    }
 
+    fn render_ssh_agent_status(&self, frame: &mut Frame, area: Rect) {
         let agent_status = self.check_ssh_agent_status();
         frame.render_widget(
             Paragraph::new(agent_status).block(
@@ -177,7 +191,25 @@ impl App {
                     .title("SSH Agent Status")
                     .title_alignment(Alignment::Center),
             ),
-            right_chunks[1],
+            area,
+        );
+    }
+
+    fn render_command_log(&self, frame: &mut Frame, area: Rect) {
+        let command_log_text = self
+            .command_log
+            .iter()
+            .map(|log| Line::from(log.as_str()))
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(command_log_text).block(
+                Block::default()
+                    .borders(ratatui::widgets::Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title("Command Log")
+                    .title_alignment(Alignment::Center),
+            ),
+            area,
         );
     }
 
@@ -332,7 +364,7 @@ impl App {
                     "SSH key is not added to agent".to_string()
                 }
             } else {
-                "Failed to read file content".to_string()
+                "It's not a ssh key".to_string()
             }
         } else {
             "No file selected".to_string()
@@ -405,7 +437,6 @@ impl App {
         match key.code {
             KeyCode::Enter => {
                 self.create_ssh_key();
-                self.toggle_create_form();
             }
             KeyCode::Esc => {
                 self.toggle_create_form();
@@ -532,6 +563,9 @@ impl App {
 
     fn toggle_create_form(&mut self) {
         self.show_create_form = !self.show_create_form;
+        if self.show_create_form {
+            self.input_index = 0;
+        }
     }
 
     fn render_create_form(&self, frame: &mut Frame) {
@@ -578,7 +612,7 @@ impl App {
             ])
             .split(Rect::new(
                 area.x + area.width / 4,
-                area.y + area.height / 4,
+                area.y + area.height / 6,
                 area.width / 2,
                 area.height / 2,
             ))
@@ -586,21 +620,19 @@ impl App {
     }
 
     fn create_input_field<'a>(&self, title: &str, value: &'a str, index: usize) -> Paragraph<'a> {
+        let border_style = if self.input_index == index {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default()
+        };
+
         Paragraph::new(value).block(
             Block::default()
                 .borders(ratatui::widgets::Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(if self.input_index == index {
-                    Style::default().fg(Color::Green)
-                } else {
-                    Style::default()
-                })
+                .border_style(border_style)
                 .title(title.to_string())
-                .title_style(if self.input_index == index {
-                    Style::default().fg(Color::Green)
-                } else {
-                    Style::default()
-                }),
+                .title_style(border_style),
         )
     }
 
@@ -612,21 +644,19 @@ impl App {
         index: usize,
     ) -> Paragraph<'a> {
         let selected_option = options[selected_index];
+        let border_style = if self.input_index == index {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default()
+        };
+
         Paragraph::new(selected_option).block(
             Block::default()
                 .borders(ratatui::widgets::Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(if self.input_index == index {
-                    Style::default().fg(Color::Green)
-                } else {
-                    Style::default()
-                })
+                .border_style(border_style)
                 .title(title.to_string())
-                .title_style(if self.input_index == index {
-                    Style::default().fg(Color::Green)
-                } else {
-                    Style::default()
-                }),
+                .title_style(border_style),
         )
     }
 
@@ -636,13 +666,14 @@ impl App {
         let key_type = &self.key_types[self.selected_key_type_index];
         let key_bits = self.bits_options[self.selected_bits_index];
 
+        let key_path_str = key_path.display().to_string();
         let output = Command::new("ssh-keygen")
             .arg("-t")
             .arg(key_type)
             .arg("-b")
             .arg(key_bits)
             .arg("-f")
-            .arg(key_path)
+            .arg(&key_path)
             .arg("-N")
             .arg(&self.passphrase)
             .arg("-C")
@@ -650,15 +681,21 @@ impl App {
             .output()
             .expect("Failed to execute ssh-keygen");
 
+        self.command_log.push(format!(
+            "ssh-keygen -t {} -b {} -f {} -N [REDACTED] -C {}",
+            key_type, key_bits, key_path_str, self.comment
+        ));
+
         if output.status.success() {
             self.ssh_files = self.load_ssh_files();
             self.selected_index = 0;
             self.clear_input_fields();
+            self.show_create_form = false;
         } else {
-            eprintln!(
+            self.command_log.push(format!(
                 "Failed to create SSH key: {}",
                 String::from_utf8_lossy(&output.stderr)
-            );
+            ));
         }
     }
 
@@ -674,10 +711,19 @@ impl App {
         if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
             let path = ssh_dir.join(selected_file);
-            Command::new("ssh-add")
-                .arg(path)
+            let output = Command::new("ssh-add")
+                .arg(&path)
                 .output()
                 .expect("Failed to execute ssh-add");
+
+            self.command_log.push(format!("ssh-add {}", path.display()));
+
+            if !output.status.success() {
+                self.command_log.push(format!(
+                    "Failed to add SSH key to agent: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
         }
     }
 
