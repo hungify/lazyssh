@@ -242,6 +242,7 @@ impl App {
             Line::from("<n> Create a SSH key"),
             Line::from("<d> Delete a SSH key"),
             Line::from("<a> Add a SSH key to agent"),
+            Line::from("<r> Remove a SSH key from agent"),
             Line::from("<c> Copy a SSH public key to clipboard"),
             Line::from("<q> Quit the application"),
         ])
@@ -577,6 +578,7 @@ impl App {
             (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
             (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
             (_, KeyCode::Char('c')) => self.copy_ssh_key_to_clipboard(),
+            (_, KeyCode::Char('r')) => self.remove_ssh_key_from_agent(),
             _ => {}
         }
     }
@@ -759,7 +761,7 @@ impl App {
                 Ok(fingerprint) => {
                     if self.is_key_in_agent(&fingerprint) {
                         self.command_log.push(format!(
-                            "SSH key {} is already added to agent",
+                            "ssh-add {} -> SSH key is already added to agent",
                             path.display()
                         ));
                         return;
@@ -776,11 +778,15 @@ impl App {
                 .output()
                 .expect("Failed to execute ssh-add");
 
-            self.command_log.push(format!("ssh-add {}", path.display()));
-
-            if !output.status.success() {
+            if output.status.success() {
                 self.command_log.push(format!(
-                    "Failed to add SSH key to agent: {}",
+                    "ssh-add {} -> SSH key added to agent",
+                    path.display()
+                ));
+            } else {
+                self.command_log.push(format!(
+                    "ssh-add {} -> Failed to add SSH key to agent: {}",
+                    path.display(),
                     String::from_utf8_lossy(&output.stderr)
                 ));
             }
@@ -801,11 +807,19 @@ impl App {
             let public_key_deleted = delete(&public_key_path).is_ok();
 
             if private_key_deleted || public_key_deleted {
+                self.command_log.push(format!(
+                    "delete {} -> SSH key deleted",
+                    private_key_path.display()
+                ));
                 self.ssh_files.remove(self.selected_index);
                 self.selected_index = self.selected_index.saturating_sub(1);
             } else {
                 let other_file_path = ssh_dir.join(selected_file);
                 if delete(&other_file_path).is_ok() {
+                    self.command_log.push(format!(
+                        "delete {} -> SSH key deleted",
+                        other_file_path.display()
+                    ));
                     self.ssh_files.remove(self.selected_index);
                     self.selected_index = self.selected_index.saturating_sub(1);
                 }
@@ -841,6 +855,56 @@ impl App {
                     self.command_log
                         .push(format!("Failed to copy SSH public key: {}", err));
                 }
+            }
+        }
+    }
+
+    fn remove_ssh_key_from_agent(&mut self) {
+        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+            if !selected_file.contains(" - ") {
+                self.command_log.push(format!(
+                    "Cannot remove: {} is not a private key file of an SSH pair",
+                    selected_file
+                ));
+                return;
+            }
+
+            let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
+            let path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
+
+            match self.get_fingerprint(&path) {
+                Ok(fingerprint) => {
+                    if !self.is_key_in_agent(&fingerprint) {
+                        self.command_log.push(format!(
+                            "ssh-add -d {} -> SSH key is not added to agent",
+                            path.display()
+                        ));
+                        return;
+                    }
+                }
+                Err(err) => {
+                    self.command_log.push(err);
+                    return;
+                }
+            }
+
+            let output = Command::new("ssh-add")
+                .arg("-d")
+                .arg(&path)
+                .output()
+                .expect("Failed to execute ssh-add");
+
+            if output.status.success() {
+                self.command_log.push(format!(
+                    "ssh-add -d {} -> SSH key removed from agent",
+                    path.display()
+                ));
+            } else {
+                self.command_log.push(format!(
+                    "ssh-add -d {} -> Failed to remove SSH key from agent: {}",
+                    path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
     }
