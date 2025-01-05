@@ -1,3 +1,4 @@
+use arboard::Clipboard;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use dirs;
@@ -537,12 +538,13 @@ impl App {
     fn handle_general_key_event(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (_, KeyCode::Esc | KeyCode::Char('q')) => self.quit(),
-            (_, KeyCode::Char('c')) => self.toggle_keybinding(),
+            (_, KeyCode::Char('?')) => self.toggle_keybinding(),
             (_, KeyCode::Down) => self.increase_selected_index(),
             (_, KeyCode::Up) => self.decrease_selected_index(),
             (_, KeyCode::Char('n')) => self.toggle_create_form(),
             (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
             (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
+            (_, KeyCode::Char('c')) => self.copy_ssh_key_to_clipboard(),
             _ => {}
         }
     }
@@ -749,6 +751,38 @@ impl App {
                 if delete(&other_file_path).is_ok() {
                     self.ssh_files.remove(self.selected_index);
                     self.selected_index = self.selected_index.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    fn copy_ssh_key_to_clipboard(&mut self) {
+        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+            if !selected_file.contains(" - ") {
+                self.command_log.push(format!(
+                    "Cannot copy: {} is not a public key file of an SSH pair",
+                    selected_file
+                ));
+                return;
+            }
+
+            let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
+            let path = ssh_dir.join(format!(
+                "{}.pub",
+                selected_file.split(" - ").next().unwrap()
+            ));
+            match read_to_string(&path) {
+                Ok(content) => {
+                    let mut clipboard = Clipboard::new().unwrap();
+                    clipboard.set_text(content).unwrap();
+                    self.command_log.push(format!(
+                        "Copied SSH public key to clipboard: {}",
+                        path.display()
+                    ));
+                }
+                Err(err) => {
+                    self.command_log
+                        .push(format!("Failed to copy SSH public key: {}", err));
                 }
             }
         }
