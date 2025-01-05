@@ -215,9 +215,9 @@ impl App {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let footer_text = if self.show_key_bindings {
-            "Execute: <enter> | Close: <esc> | Keybindings: ? | Cancel: <esc>"
+            "Execute: <enter> | Keybindings: ? | Close: <esc>"
         } else {
-            "Press `Esc`, `Ctrl-C` or `q` to quit. Use arrow keys to navigate. | Keybindings: ?"
+            "Create: n | Delete: d | Add to agent: a | Remove from agent: r | Copy to clipboard: c | Keybindings: ? | Quit: q"
         };
         frame.render_widget(
             Paragraph::new(footer_text).block(
@@ -420,7 +420,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_keybinding(&mut self) {
+    fn toggle_keybindings(&mut self) {
         self.show_key_bindings = !self.show_key_bindings;
     }
 
@@ -474,7 +474,7 @@ impl App {
                 self.create_ssh_key();
             }
             KeyCode::Esc => {
-                self.toggle_create_form();
+                self.toggle_create_ssh_key();
             }
             KeyCode::Tab => {
                 self.input_index = (self.input_index + 1) % 5;
@@ -559,7 +559,7 @@ impl App {
     fn handle_key_bindings_key_event(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
-                self.toggle_keybinding();
+                self.toggle_keybindings();
             }
             KeyCode::Char('d') => {
                 self.show_confirm_delete = true;
@@ -570,15 +570,15 @@ impl App {
 
     fn handle_general_key_event(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
-            (_, KeyCode::Esc | KeyCode::Char('q')) => self.quit(),
-            (_, KeyCode::Char('?')) => self.toggle_keybinding(),
-            (_, KeyCode::Down) => self.increase_selected_index(),
-            (_, KeyCode::Up) => self.decrease_selected_index(),
-            (_, KeyCode::Char('n')) => self.toggle_create_form(),
+            (_, KeyCode::Char('q')) => self.quit(),
+            (_, KeyCode::Char('?')) => self.toggle_keybindings(),
+            (_, KeyCode::Char('n')) => self.toggle_create_ssh_key(),
             (_, KeyCode::Char('a')) => self.add_ssh_key_to_agent(),
             (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
             (_, KeyCode::Char('c')) => self.copy_ssh_key_to_clipboard(),
             (_, KeyCode::Char('r')) => self.remove_ssh_key_from_agent(),
+            (_, KeyCode::Down) => self.increase_selected_index(),
+            (_, KeyCode::Up) => self.decrease_selected_index(),
             _ => {}
         }
     }
@@ -598,7 +598,7 @@ impl App {
         self.running = false;
     }
 
-    fn toggle_create_form(&mut self) {
+    fn toggle_create_ssh_key(&mut self) {
         self.show_create_form = !self.show_create_form;
         if self.show_create_form {
             self.input_index = 0;
