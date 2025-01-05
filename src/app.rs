@@ -353,23 +353,55 @@ impl App {
                 "{}.pub",
                 selected_file.split(" - ").next().unwrap()
             ));
-            if let Ok(file_content) = read_to_string(path) {
-                let output = Command::new("ssh-add")
-                    .arg("-L")
-                    .output()
-                    .expect("Failed to execute ssh-add");
-
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                if output_str.contains(&file_content) {
-                    "SSH key is added to agent".to_string()
-                } else {
-                    "SSH key is not added to agent".to_string()
+            if path.exists() {
+                match self.get_fingerprint(&path) {
+                    Ok(fingerprint) => {
+                        if self.is_key_in_agent(&fingerprint) {
+                            "SSH key is added to agent".to_string()
+                        } else {
+                            "SSH key is not added to agent".to_string()
+                        }
+                    }
+                    Err(err) => err,
                 }
             } else {
                 "It's not a ssh key".to_string()
             }
         } else {
             "No file selected".to_string()
+        }
+    }
+
+    fn get_fingerprint(&self, path: &std::path::Path) -> Result<String, String> {
+        let output = Command::new("ssh-keygen")
+            .arg("-lf")
+            .arg(path)
+            .output()
+            .expect("Failed to execute ssh-keygen");
+
+        if output.status.success() {
+            let fingerprint = String::from_utf8_lossy(&output.stdout);
+            Ok(fingerprint
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("")
+                .to_string())
+        } else {
+            Err("Failed to get SSH key fingerprint".to_string())
+        }
+    }
+
+    fn is_key_in_agent(&self, fingerprint: &str) -> bool {
+        let output = Command::new("ssh-add")
+            .arg("-l")
+            .output()
+            .expect("Failed to execute ssh-add");
+
+        if output.status.success() {
+            let agent_keys = String::from_utf8_lossy(&output.stdout);
+            agent_keys.lines().any(|line| line.contains(fingerprint))
+        } else {
+            false
         }
     }
 
