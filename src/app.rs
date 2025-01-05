@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::fs::read_to_string;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 use trash::delete;
 
 pub struct App {
@@ -23,10 +24,11 @@ pub struct App {
     show_key_bindings: bool,
     show_confirm_delete: bool,
     show_create_form: bool,
-    new_key_name: String,
+    key_name: String,
     key_type: String,
     key_bits: String,
     passphrase: String,
+    re_passphrase: String,
     input_index: usize,
     key_types: Vec<&'static str>,
     selected_key_type_index: usize,
@@ -45,10 +47,11 @@ impl Default for App {
             show_key_bindings: false,
             show_confirm_delete: false,
             show_create_form: false,
-            new_key_name: String::new(),
+            key_name: String::new(),
             key_type: String::new(),
             key_bits: String::new(),
             passphrase: String::new(),
+            re_passphrase: String::new(),
             input_index: 0,
             key_types: vec!["rsa", "dsa", "ecdsa", "ed25519"],
             selected_key_type_index: 0,
@@ -471,36 +474,45 @@ impl App {
     fn handle_create_form_key_event(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter => {
-                self.create_ssh_key();
+                if self.passphrase == self.re_passphrase {
+                    self.create_ssh_key();
+                } else {
+                    self.command_log
+                        .push("Passphrases do not match".to_string());
+                }
             }
             KeyCode::Esc => {
                 self.toggle_create_ssh_key();
             }
             KeyCode::Tab => {
-                self.input_index = (self.input_index + 1) % 5;
+                self.input_index = (self.input_index + 1) % 6;
             }
             KeyCode::BackTab => {
                 if self.input_index == 0 {
-                    self.input_index = 4;
+                    self.input_index = 5;
                 } else {
                     self.input_index -= 1;
                 }
             }
             KeyCode::Char(c) => match self.input_index {
-                0 => self.new_key_name.push(c),
+                0 => self.key_name.push(c),
                 3 => self.passphrase.push(c),
-                4 => self.comment.push(c),
+                4 => self.re_passphrase.push(c),
+                5 => self.comment.push(c),
                 _ => {}
             },
             KeyCode::Backspace => {
                 match self.input_index {
                     0 => {
-                        self.new_key_name.pop();
+                        self.key_name.pop();
                     }
                     3 => {
                         self.passphrase.pop();
                     }
                     4 => {
+                        self.re_passphrase.pop();
+                    }
+                    5 => {
                         self.comment.pop();
                     }
                     _ => {}
@@ -509,12 +521,15 @@ impl App {
             KeyCode::Delete => {
                 match self.input_index {
                     0 => {
-                        self.new_key_name.clear();
+                        self.key_name.clear();
                     }
                     3 => {
                         self.passphrase.clear();
                     }
                     4 => {
+                        self.re_passphrase.clear();
+                    }
+                    5 => {
                         self.comment.clear();
                     }
                     _ => {}
@@ -608,7 +623,7 @@ impl App {
     fn render_create_form(&self, frame: &mut Frame) {
         let input_chunks = self.create_form_layout(frame.area());
 
-        let name_input = self.create_input_field("Name", &self.new_key_name, 0);
+        let name_input = self.create_input_field("Name", &self.key_name, 0);
         let type_input = self.create_select_field(
             "Type (use arrow keys to change)",
             &self.key_types,
@@ -621,26 +636,34 @@ impl App {
             self.selected_bits_index,
             2,
         );
-        let passphrase_input = self.create_input_field("Passphrase", &self.passphrase, 3);
-        let comment_input = self.create_input_field("Comment", &self.comment, 4);
+        let masked_passphrase = "*".repeat(self.passphrase.len());
+        let masked_re_passphrase = "*".repeat(self.re_passphrase.len());
+
+        let passphrase_input = self.create_input_field("Passphrase", &masked_passphrase, 3);
+        let re_passphrase_input =
+            self.create_input_field("Re-enter Passphrase", &masked_re_passphrase, 4);
+        let comment_input = self.create_input_field("Comment", &self.comment, 5);
 
         frame.render_widget(Clear, input_chunks[0]);
         frame.render_widget(Clear, input_chunks[1]);
         frame.render_widget(Clear, input_chunks[2]);
         frame.render_widget(Clear, input_chunks[3]);
         frame.render_widget(Clear, input_chunks[4]);
+        frame.render_widget(Clear, input_chunks[5]);
 
         frame.render_widget(name_input, input_chunks[0]);
         frame.render_widget(type_input, input_chunks[1]);
         frame.render_widget(bits_input, input_chunks[2]);
         frame.render_widget(passphrase_input, input_chunks[3]);
-        frame.render_widget(comment_input, input_chunks[4]);
+        frame.render_widget(re_passphrase_input, input_chunks[4]);
+        frame.render_widget(comment_input, input_chunks[5]);
     }
 
     fn create_form_layout(&self, area: Rect) -> Vec<Rect> {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
+                Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
@@ -699,11 +722,24 @@ impl App {
 
     fn create_ssh_key(&mut self) {
         let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-        let key_path = ssh_dir.join(&self.new_key_name);
         let key_type = &self.key_types[self.selected_key_type_index];
         let key_bits = self.bits_options[self.selected_bits_index];
+        let now = SystemTime::now();
+        let current_time = now
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
 
+        let key_name_with_fallback = if self.key_name.trim().is_empty() {
+            "id_".to_string() + key_type + "_" + &current_time
+        } else {
+            self.key_name.trim().to_string()
+        };
+
+        let key_path = ssh_dir.join(&key_name_with_fallback);
         let key_path_str = key_path.display().to_string();
+
         let output = Command::new("ssh-keygen")
             .arg("-t")
             .arg(key_type)
@@ -718,16 +754,18 @@ impl App {
             .output()
             .expect("Failed to execute ssh-keygen");
 
+        let masked_passphrase = "*".repeat(self.passphrase.len());
         self.command_log.push(format!(
-            "ssh-keygen -t {} -b {} -f {} -N [REDACTED] -C {} -> SSH key created",
-            key_type, key_bits, key_path_str, self.comment
+            "ssh-keygen -t {} -b {} -f {} -N {} -C {}",
+            key_type, key_bits, key_path_str, masked_passphrase, self.comment
         ));
-
         if output.status.success() {
             self.ssh_files = self.load_ssh_files();
             self.selected_index = 0;
-            self.clear_input_fields();
             self.show_create_form = false;
+            self.clear_input_fields();
+            self.command_log
+                .push(format!("SSH key created: {}", key_path.display()));
         } else {
             self.command_log.push(format!(
                 "Failed to create SSH key: {}",
@@ -737,10 +775,11 @@ impl App {
     }
 
     fn clear_input_fields(&mut self) {
-        self.new_key_name.clear();
+        self.key_name.clear();
         self.key_type.clear();
         self.key_bits.clear();
         self.passphrase.clear();
+        self.re_passphrase.clear();
         self.comment.clear();
     }
 
