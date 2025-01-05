@@ -754,6 +754,23 @@ impl App {
 
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
             let path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
+
+            match self.get_fingerprint(&path) {
+                Ok(fingerprint) => {
+                    if self.is_key_in_agent(&fingerprint) {
+                        self.command_log.push(format!(
+                            "SSH key {} is already added to agent",
+                            path.display()
+                        ));
+                        return;
+                    }
+                }
+                Err(err) => {
+                    self.command_log.push(err);
+                    return;
+                }
+            }
+
             let output = Command::new("ssh-add")
                 .arg(&path)
                 .output()
