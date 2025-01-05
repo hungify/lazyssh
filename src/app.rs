@@ -1,6 +1,6 @@
 use arboard::Clipboard;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use dirs;
 use ratatui::widgets::Clear;
 use ratatui::{
@@ -719,7 +719,7 @@ impl App {
             .expect("Failed to execute ssh-keygen");
 
         self.command_log.push(format!(
-            "ssh-keygen -t {} -b {} -f {} -N [REDACTED] -C {}",
+            "ssh-keygen -t {} -b {} -f {} -N [REDACTED] -C {} -> SSH key created",
             key_type, key_bits, key_path_str, self.comment
         ));
 
@@ -808,7 +808,7 @@ impl App {
 
             if private_key_deleted || public_key_deleted {
                 self.command_log.push(format!(
-                    "delete {} -> SSH key deleted",
+                    "Move to trash: {} -> SSH key moved to trash",
                     private_key_path.display()
                 ));
                 self.ssh_files.remove(self.selected_index);
@@ -817,7 +817,7 @@ impl App {
                 let other_file_path = ssh_dir.join(selected_file);
                 if delete(&other_file_path).is_ok() {
                     self.command_log.push(format!(
-                        "delete {} -> SSH key deleted",
+                        "Move to trash: {} -> SSH key moved to trash",
                         other_file_path.display()
                     ));
                     self.ssh_files.remove(self.selected_index);
@@ -847,7 +847,7 @@ impl App {
                     let mut clipboard = Clipboard::new().unwrap();
                     clipboard.set_text(content).unwrap();
                     self.command_log.push(format!(
-                        "Copied SSH public key to clipboard: {}",
+                        "Copy to clipboard: {} -> SSH public key copied to clipboard",
                         path.display()
                     ));
                 }
