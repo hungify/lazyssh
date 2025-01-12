@@ -218,9 +218,9 @@ impl App {
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let footer_text = if self.show_key_bindings {
-            "Execute: <enter> | Keybindings: ? | Close: <esc>"
+            "Use ↓↑ to move | Execute: <enter> | Keybindings: ? | Close: <esc>"
         } else {
-            "Create: n | Delete: d | Add to agent: a | Remove from agent: r | Copy to clipboard: c | Keybindings: ? | Quit: q"
+            "Use ↓↑ to move | Create: n | Delete: d | Add to agent: a | Remove from agent: r | Copy to clipboard: c | Keybindings: ? | Quit: q"
         };
         frame.render_widget(
             Paragraph::new(footer_text).block(
