@@ -2,7 +2,9 @@ use arboard::Clipboard;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use dirs;
-use ratatui::widgets::Clear;
+use ratatui::style::palette::tailwind::SLATE;
+use ratatui::symbols;
+use ratatui::widgets::{Borders, Clear, HighlightSpacing, List, ListItem, ListState};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -13,9 +15,39 @@ use ratatui::{
 use std::collections::HashSet;
 use std::fs;
 use std::fs::read_to_string;
+use std::iter::FromIterator;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use trash::delete;
+
+const SELECTED_STYLE: Style = Style::new().bg(SLATE.c800).add_modifier(Modifier::BOLD);
+
+struct KeyBindingItem {
+    keycode: KeyCode,
+    text: &'static str,
+}
+
+impl KeyBindingItem {
+    fn new(keycode: KeyCode, text: &'static str) -> Self {
+        Self { keycode, text }
+    }
+}
+
+struct KeyBindings {
+    items: Vec<KeyBindingItem>,
+    state: ListState,
+}
+
+impl FromIterator<(KeyCode, &'static str)> for KeyBindings {
+    fn from_iter<I: IntoIterator<Item = (KeyCode, &'static str)>>(iter: I) -> Self {
+        let items: Vec<KeyBindingItem> = iter
+            .into_iter()
+            .map(|(keycode, text)| KeyBindingItem::new(keycode, text))
+            .collect();
+        let state = ListState::default();
+        Self { items, state }
+    }
+}
 
 pub struct App {
     running: bool,
@@ -36,6 +68,7 @@ pub struct App {
     selected_bits_index: usize,
     comment: String,
     command_log: Vec<String>,
+    key_bindings: KeyBindings,
 }
 
 impl Default for App {
@@ -59,6 +92,17 @@ impl Default for App {
             selected_bits_index: 1,
             comment: String::new(),
             command_log: Vec::new(),
+            key_bindings: KeyBindings::from_iter([
+                (KeyCode::Char('q'), "Quit the application"),
+                (KeyCode::Char('?'), "Toggle key bindings"),
+                (KeyCode::Char('n'), "Create a SSH key"),
+                (KeyCode::Char('a'), "Add a SSH key to agent"),
+                (KeyCode::Char('d'), "Delete a SSH key"),
+                (KeyCode::Char('c'), "Copy a SSH public key to clipboard"),
+                (KeyCode::Char('r'), "Remove a SSH key from agent"),
+                (KeyCode::Up, "Move up"),
+                (KeyCode::Down, "Move down"),
+            ]),
         }
     }
 }
@@ -241,31 +285,33 @@ impl App {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Green));
 
-        let popup = Paragraph::new(vec![
-            Line::from("<n> Create a SSH key"),
-            Line::from("<d> Delete a SSH key"),
-            Line::from("<a> Add a SSH key to agent"),
-            Line::from("<r> Remove a SSH key from agent"),
-            Line::from("<c> Copy a SSH public key to clipboard"),
-            Line::from("<q> Quit the application"),
-        ])
-        .block(title)
-        .alignment(Alignment::Left);
-
         let popup_area = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(30), Constraint::Percentage(30)].as_ref())
             .split(frame.area())[1];
 
-        let popup_area = Rect::new(
+        let popup_rect = Rect::new(
             popup_area.x + popup_area.width / 4,
             popup_area.y / 2,
             popup_area.width / 2,
             popup_area.height,
         );
 
-        frame.render_widget(Clear, popup_area);
-        frame.render_widget(popup, popup_area);
+        let items: Vec<ListItem> = self
+            .key_bindings
+            .items
+            .iter()
+            .map(|item| ListItem::from(format!("{:?} {}", item.keycode, item.text)))
+            .collect();
+
+        let list = List::new(items)
+            .block(title)
+            .highlight_style(SELECTED_STYLE)
+            .highlight_symbol(">")
+            .highlight_spacing(HighlightSpacing::Always);
+
+        frame.render_widget(Clear, popup_rect);
+        frame.render_widget(list, popup_rect);
     }
 
     fn render_confirm_delete_popup(&self, frame: &mut Frame) {
