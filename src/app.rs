@@ -2,7 +2,7 @@ use arboard::Clipboard;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use dirs;
-use ratatui::widgets::Clear;
+use ratatui::widgets::{Clear, List, ListItem, ListState, Padding};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -13,9 +13,40 @@ use ratatui::{
 use std::collections::HashSet;
 use std::fs;
 use std::fs::read_to_string;
+use std::iter::FromIterator;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use trash::delete;
+
+struct KeyBindingItem {
+    keycode: char,
+    text: &'static str,
+}
+
+impl KeyBindingItem {
+    fn new(keycode: char, text: &'static str) -> Self {
+        Self { keycode, text }
+    }
+}
+
+struct KeyBindings {
+    items: Vec<KeyBindingItem>,
+    state: ListState,
+}
+
+impl FromIterator<(char, &'static str)> for KeyBindings {
+    fn from_iter<I: IntoIterator<Item = (char, &'static str)>>(iter: I) -> Self {
+        let items: Vec<KeyBindingItem> = iter
+            .into_iter()
+            .map(|(keycode, text)| KeyBindingItem::new(keycode, text))
+            .collect();
+        let mut state = ListState::default();
+        if !items.is_empty() {
+            state.select(Some(0));
+        }
+        Self { items, state }
+    }
+}
 
 pub struct App {
     running: bool,
@@ -36,6 +67,7 @@ pub struct App {
     selected_bits_index: usize,
     comment: String,
     command_log: Vec<String>,
+    key_bindings: KeyBindings,
 }
 
 impl Default for App {
@@ -59,6 +91,13 @@ impl Default for App {
             selected_bits_index: 1,
             comment: String::new(),
             command_log: Vec::new(),
+            key_bindings: KeyBindings::from_iter([
+                ('n', "Create a SSH key"),
+                ('a', "Add a SSH key to agent"),
+                ('d', "Delete a SSH key"),
+                ('c', "Copy a SSH public key to clipboard"),
+                ('r', "Remove a SSH key from agent"),
+            ]),
         }
     }
 }
@@ -234,38 +273,46 @@ impl App {
         );
     }
 
-    fn render_key_bindings_popup(&self, frame: &mut Frame) {
+    fn render_key_bindings_popup(&mut self, frame: &mut Frame) {
         let title = Block::default()
             .title("Key Bindings")
             .borders(ratatui::widgets::Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Green));
-
-        let popup = Paragraph::new(vec![
-            Line::from("<n> Create a SSH key"),
-            Line::from("<d> Delete a SSH key"),
-            Line::from("<a> Add a SSH key to agent"),
-            Line::from("<r> Remove a SSH key from agent"),
-            Line::from("<c> Copy a SSH public key to clipboard"),
-            Line::from("<q> Quit the application"),
-        ])
-        .block(title)
-        .alignment(Alignment::Left);
+            .title_alignment(Alignment::Center)
+            .border_style(Style::default().fg(Color::Green))
+            .padding(Padding {
+                bottom: 0,
+                left: 1,
+                right: 1,
+                top: 1,
+            });
 
         let popup_area = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(30), Constraint::Percentage(30)].as_ref())
             .split(frame.area())[1];
 
-        let popup_area = Rect::new(
-            popup_area.x + popup_area.width / 4,
+        let popup_rect = Rect::new(
+            popup_area.x + popup_area.width / 3,
             popup_area.y / 2,
-            popup_area.width / 2,
-            popup_area.height,
+            popup_area.width / 3,
+            popup_area.y + popup_area.height / 6,
         );
 
-        frame.render_widget(Clear, popup_area);
-        frame.render_widget(popup, popup_area);
+        let items: Vec<ListItem> = self
+            .key_bindings
+            .items
+            .iter()
+            .map(|item| ListItem::from(format!("{} {}", item.keycode, item.text)))
+            .collect();
+
+        let list = List::new(items).block(title).highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        frame.render_stateful_widget(list, popup_rect, &mut self.key_bindings.state);
     }
 
     fn render_confirm_delete_popup(&self, frame: &mut Frame) {
@@ -573,14 +620,51 @@ impl App {
 
     fn handle_key_bindings_key_event(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => {
-                self.toggle_keybindings();
-            }
-            KeyCode::Char('d') => {
-                self.show_confirm_delete = true;
-            }
+            KeyCode::Enter => self.execute_selected_key_binding(),
+            KeyCode::Up => self.select_previous_key_binding(),
+            KeyCode::Down => self.select_next_key_binding(),
+            KeyCode::Esc | KeyCode::Char('?') => self.toggle_keybindings(),
             _ => {}
         }
+    }
+
+    fn execute_selected_key_binding(&mut self) {
+        if let Some(selected) = self.key_bindings.state.selected() {
+            let key_binding = &self.key_bindings.items[selected];
+            self.handle_general_key_event(KeyEvent::new(
+                KeyCode::Char(key_binding.keycode),
+                event::KeyModifiers::NONE,
+            ));
+            self.toggle_keybindings();
+        }
+    }
+
+    fn select_previous_key_binding(&mut self) {
+        let i = match self.key_bindings.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.key_bindings.items.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.key_bindings.state.select(Some(i));
+    }
+
+    fn select_next_key_binding(&mut self) {
+        let i = match self.key_bindings.state.selected() {
+            Some(i) => {
+                if i == self.key_bindings.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.key_bindings.state.select(Some(i));
     }
 
     fn handle_general_key_event(&mut self, key: KeyEvent) {
