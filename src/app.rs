@@ -2,7 +2,7 @@ use arboard::Clipboard;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use dirs;
-use ratatui::widgets::{Clear, List, ListItem, ListState, Padding};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Padding, Wrap};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -212,7 +212,7 @@ impl App {
     fn render_ssh_content(&self, frame: &mut Frame, area: Rect) {
         let ssh_content = self.load_ssh_content();
         frame.render_widget(
-            Paragraph::new(ssh_content).block(
+            Paragraph::new(ssh_content).wrap(Wrap { trim: true }).block(
                 Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
                     .border_type(BorderType::Rounded)
