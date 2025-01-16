@@ -1,6 +1,6 @@
 use arboard::Clipboard;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use dirs;
 use ratatui::style::Stylize;
 use ratatui::widgets::{Clear, List, ListItem, ListState, Padding, Wrap};
@@ -489,13 +489,7 @@ impl App {
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => self.on_key_event(key),
-                Event::Mouse(event) => {
-                    self.on_mouse_event(event);
-                    println!(
-                        "Selected index after click: {}",
-                        self.ssh_files_state.selected().unwrap_or(0)
-                    );
-                }
+                Event::Mouse(_) => {}
                 Event::Resize(_, _) => {}
             }
         }
@@ -586,36 +580,20 @@ impl App {
 
     fn handle_backspace(&mut self) {
         match self.create_form_state.selected() {
-            Some(0) => {
-                self.key_name.pop();
-            }
-            Some(3) => {
-                self.passphrase.pop();
-            }
-            Some(4) => {
-                self.re_passphrase.pop();
-            }
-            Some(5) => {
-                self.comment.pop();
-            }
-            _ => {}
+            Some(0) => self.key_name.pop(),
+            Some(3) => self.passphrase.pop(),
+            Some(4) => self.re_passphrase.pop(),
+            Some(5) => self.comment.pop(),
+            _ => None,
         };
     }
 
     fn handle_delete(&mut self) {
         match self.create_form_state.selected() {
-            Some(0) => {
-                self.key_name.clear();
-            }
-            Some(3) => {
-                self.passphrase.clear();
-            }
-            Some(4) => {
-                self.re_passphrase.clear();
-            }
-            Some(5) => {
-                self.comment.clear();
-            }
+            Some(0) => self.key_name.clear(),
+            Some(3) => self.passphrase.clear(),
+            Some(4) => self.re_passphrase.clear(),
+            Some(5) => self.comment.clear(),
             _ => {}
         };
     }
@@ -714,18 +692,6 @@ impl App {
             (_, KeyCode::Down) => self.ssh_files_state.select_next(),
             (_, KeyCode::Up) => self.ssh_files_state.select_previous(),
             _ => {}
-        }
-    }
-
-    fn on_mouse_event(&mut self, event: MouseEvent) {
-        if let MouseEventKind::Down(_) = event.kind {
-            let list_start = 1;
-            let list_end = list_start + self.ssh_files.len() as u16;
-
-            if event.column < 50 && event.row >= list_start && event.row < list_end {
-                self.ssh_files_state
-                    .select(Some((event.row - list_start) as usize));
-            }
         }
     }
 
