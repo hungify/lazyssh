@@ -88,10 +88,22 @@ impl Default for App {
         create_form_state.select(Some(0));
         Self {
             running: true,
+
             ssh_files: Vec::new(),
             ssh_files_state,
-            show_key_bindings: false,
+
             show_confirm_delete: false,
+            command_log: Vec::new(),
+
+            show_key_bindings: false,
+            key_bindings: KeyBindings::from_iter([
+                ('n', "Create a SSH key"),
+                ('a', "Add a SSH key to agent"),
+                ('d', "Delete a SSH key"),
+                ('c', "Copy a SSH public key to clipboard"),
+                ('r', "Remove a SSH key from agent"),
+            ]),
+
             show_create_form: false,
             key_name: String::new(),
             key_type: String::new(),
@@ -103,14 +115,6 @@ impl Default for App {
             bits_options: vec!["1024", "2048", "4096"],
             selected_bits_index: 1,
             comment: String::new(),
-            command_log: Vec::new(),
-            key_bindings: KeyBindings::from_iter([
-                ('n', "Create a SSH key"),
-                ('a', "Add a SSH key to agent"),
-                ('d', "Delete a SSH key"),
-                ('c', "Copy a SSH public key to clipboard"),
-                ('r', "Remove a SSH key from agent"),
-            ]),
             create_form_state,
         }
     }
