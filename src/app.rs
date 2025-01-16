@@ -19,6 +19,8 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use trash::delete;
 
+const FORM_FIELD_COUNT: usize = 6;
+
 struct KeyBindingItem {
     keycode: char,
     text: &'static str,
@@ -51,24 +53,27 @@ impl FromIterator<(char, &'static str)> for KeyBindings {
 
 pub struct App {
     running: bool,
-    selected_index: usize,
+    command_log: Vec<String>,
+
     ssh_files: Vec<String>,
     ssh_files_state: ListState,
+
     show_key_bindings: bool,
     show_confirm_delete: bool,
     show_create_form: bool,
+
+    create_form_state: ListState,
     key_name: String,
     key_type: String,
     key_bits: String,
     passphrase: String,
     re_passphrase: String,
-    input_index: usize,
     key_types: Vec<&'static str>,
     selected_key_type_index: usize,
     bits_options: Vec<&'static str>,
     selected_bits_index: usize,
     comment: String,
-    command_log: Vec<String>,
+
     key_bindings: KeyBindings,
 }
 
@@ -76,9 +81,10 @@ impl Default for App {
     fn default() -> Self {
         let mut ssh_files_state = ListState::default();
         ssh_files_state.select(Some(0));
+        let mut create_form_state = ListState::default();
+        create_form_state.select(Some(0));
         Self {
             running: true,
-            selected_index: 0,
             ssh_files: Vec::new(),
             ssh_files_state,
             show_key_bindings: false,
@@ -89,7 +95,6 @@ impl Default for App {
             key_bits: String::new(),
             passphrase: String::new(),
             re_passphrase: String::new(),
-            input_index: 0,
             key_types: vec!["rsa", "dsa", "ecdsa", "ed25519"],
             selected_key_type_index: 0,
             bits_options: vec!["1024", "2048", "4096"],
@@ -103,6 +108,7 @@ impl Default for App {
                 ('c', "Copy a SSH public key to clipboard"),
                 ('r', "Remove a SSH key from agent"),
             ]),
+            create_form_state,
         }
     }
 }
@@ -185,7 +191,7 @@ impl App {
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let style = if i == self.selected_index {
+                let style = if self.ssh_files_state.selected() == Some(i) {
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD)
@@ -198,8 +204,11 @@ impl App {
             })
             .collect();
 
-        let current_selection_info =
-            format!("|{} of {}|", self.selected_index + 1, self.ssh_files.len());
+        let current_selection_info = format!(
+            "|{} of {}|",
+            self.ssh_files_state.selected().unwrap_or(0) + 1,
+            self.ssh_files.len()
+        );
 
         let list = List::new(items)
             .block(
@@ -397,7 +406,10 @@ impl App {
 
     fn load_ssh_content(&self) -> String {
         let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+        if let Some(selected_file) = self
+            .ssh_files
+            .get(self.ssh_files_state.selected().unwrap_or(0))
+        {
             let file_name = selected_file.split(" - ").next().unwrap();
             let path = if selected_file.contains(" - ") {
                 ssh_dir.join(format!("{}.pub", file_name))
@@ -412,7 +424,10 @@ impl App {
     }
 
     fn check_ssh_agent_status(&self) -> String {
-        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+        if let Some(selected_file) = self
+            .ssh_files
+            .get(self.ssh_files_state.selected().unwrap_or(0))
+        {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
             let path = ssh_dir.join(format!(
                 "{}.pub",
@@ -476,7 +491,10 @@ impl App {
                 Event::Key(key) => self.on_key_event(key),
                 Event::Mouse(event) => {
                     self.on_mouse_event(event);
-                    println!("Selected index after click: {}", self.selected_index);
+                    println!(
+                        "Selected index after click: {}",
+                        self.ssh_files_state.selected().unwrap_or(0)
+                    );
                 }
                 Event::Resize(_, _) => {}
             }
@@ -486,20 +504,6 @@ impl App {
 
     fn toggle_keybindings(&mut self) {
         self.show_key_bindings = !self.show_key_bindings;
-    }
-
-    fn increase_selected_index(&mut self) {
-        if self.selected_index < self.ssh_files.len().saturating_sub(1) {
-            self.selected_index += 1;
-            self.ssh_files_state.select(Some(self.selected_index));
-        }
-    }
-
-    fn decrease_selected_index(&mut self) {
-        if self.selected_index > 0 {
-            self.selected_index -= 1;
-            self.ssh_files_state.select(Some(self.selected_index));
-        }
     }
 
     fn on_key_event(&mut self, key: KeyEvent) {
@@ -544,93 +548,108 @@ impl App {
                         .push("Passphrases do not match".to_string());
                 }
             }
-            KeyCode::Esc => {
-                self.toggle_create_ssh_key();
+            KeyCode::Esc => self.toggle_create_ssh_key(),
+            KeyCode::Tab => self.select_next_form_field(),
+            KeyCode::BackTab => self.select_previous_form_field(),
+            KeyCode::Char(c) => self.handle_char_input(c),
+            KeyCode::Backspace => self.handle_backspace(),
+            KeyCode::Delete => self.handle_delete(),
+            KeyCode::Up => self.handle_up_key(),
+            KeyCode::Down => self.handle_down_key(),
+            _ => {}
+        }
+    }
+
+    fn select_next_form_field(&mut self) {
+        let next_index = (self.create_form_state.selected().unwrap_or(0) + 1) % FORM_FIELD_COUNT;
+        self.create_form_state.select(Some(next_index));
+    }
+
+    fn select_previous_form_field(&mut self) {
+        let prev_index = if self.create_form_state.selected().unwrap_or(0) == 0 {
+            FORM_FIELD_COUNT - 1
+        } else {
+            self.create_form_state.selected().unwrap_or(0) - 1
+        };
+        self.create_form_state.select(Some(prev_index));
+    }
+
+    fn handle_char_input(&mut self, c: char) {
+        match self.create_form_state.selected() {
+            Some(0) => self.key_name.push(c),
+            Some(3) => self.passphrase.push(c),
+            Some(4) => self.re_passphrase.push(c),
+            Some(5) => self.comment.push(c),
+            _ => {}
+        }
+    }
+
+    fn handle_backspace(&mut self) {
+        match self.create_form_state.selected() {
+            Some(0) => {
+                self.key_name.pop();
             }
-            KeyCode::Tab => {
-                self.input_index = (self.input_index + 1) % 6;
+            Some(3) => {
+                self.passphrase.pop();
             }
-            KeyCode::BackTab => {
-                if self.input_index == 0 {
-                    self.input_index = 5;
-                } else {
-                    self.input_index -= 1;
-                }
+            Some(4) => {
+                self.re_passphrase.pop();
             }
-            KeyCode::Char(c) => match self.input_index {
-                0 => self.key_name.push(c),
-                3 => self.passphrase.push(c),
-                4 => self.re_passphrase.push(c),
-                5 => self.comment.push(c),
-                _ => {}
-            },
-            KeyCode::Backspace => {
-                match self.input_index {
-                    0 => {
-                        self.key_name.pop();
-                    }
-                    3 => {
-                        self.passphrase.pop();
-                    }
-                    4 => {
-                        self.re_passphrase.pop();
-                    }
-                    5 => {
-                        self.comment.pop();
-                    }
-                    _ => {}
-                };
-            }
-            KeyCode::Delete => {
-                match self.input_index {
-                    0 => {
-                        self.key_name.clear();
-                    }
-                    3 => {
-                        self.passphrase.clear();
-                    }
-                    4 => {
-                        self.re_passphrase.clear();
-                    }
-                    5 => {
-                        self.comment.clear();
-                    }
-                    _ => {}
-                };
-            }
-            KeyCode::Up => {
-                if self.input_index == 1 {
-                    self.selected_key_type_index = if self.selected_key_type_index == 0 {
-                        self.key_types.len() - 1
-                    } else {
-                        self.selected_key_type_index - 1
-                    };
-                } else if self.input_index == 2 {
-                    self.selected_bits_index = if self.selected_bits_index == 0 {
-                        self.bits_options.len() - 1
-                    } else {
-                        self.selected_bits_index - 1
-                    };
-                }
-            }
-            KeyCode::Down => {
-                if self.input_index == 1 {
-                    self.selected_key_type_index =
-                        if self.selected_key_type_index == self.key_types.len() - 1 {
-                            0
-                        } else {
-                            self.selected_key_type_index + 1
-                        };
-                } else if self.input_index == 2 {
-                    self.selected_bits_index =
-                        if self.selected_bits_index == self.bits_options.len() - 1 {
-                            0
-                        } else {
-                            self.selected_bits_index + 1
-                        };
-                }
+            Some(5) => {
+                self.comment.pop();
             }
             _ => {}
+        };
+    }
+
+    fn handle_delete(&mut self) {
+        match self.create_form_state.selected() {
+            Some(0) => {
+                self.key_name.clear();
+            }
+            Some(3) => {
+                self.passphrase.clear();
+            }
+            Some(4) => {
+                self.re_passphrase.clear();
+            }
+            Some(5) => {
+                self.comment.clear();
+            }
+            _ => {}
+        };
+    }
+
+    fn handle_up_key(&mut self) {
+        if let Some(1) = self.create_form_state.selected() {
+            self.selected_key_type_index = if self.selected_key_type_index == 0 {
+                self.key_types.len() - 1
+            } else {
+                self.selected_key_type_index - 1
+            };
+        } else if let Some(2) = self.create_form_state.selected() {
+            self.selected_bits_index = if self.selected_bits_index == 0 {
+                self.bits_options.len() - 1
+            } else {
+                self.selected_bits_index - 1
+            };
+        }
+    }
+
+    fn handle_down_key(&mut self) {
+        if let Some(1) = self.create_form_state.selected() {
+            self.selected_key_type_index =
+                if self.selected_key_type_index == self.key_types.len() - 1 {
+                    0
+                } else {
+                    self.selected_key_type_index + 1
+                };
+        } else if let Some(2) = self.create_form_state.selected() {
+            self.selected_bits_index = if self.selected_bits_index == self.bits_options.len() - 1 {
+                0
+            } else {
+                self.selected_bits_index + 1
+            };
         }
     }
 
@@ -692,8 +711,8 @@ impl App {
             (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
             (_, KeyCode::Char('c')) => self.copy_ssh_key_to_clipboard(),
             (_, KeyCode::Char('r')) => self.remove_ssh_key_from_agent(),
-            (_, KeyCode::Down) => self.increase_selected_index(),
-            (_, KeyCode::Up) => self.decrease_selected_index(),
+            (_, KeyCode::Down) => self.ssh_files_state.select_next(),
+            (_, KeyCode::Up) => self.ssh_files_state.select_previous(),
             _ => {}
         }
     }
@@ -704,7 +723,8 @@ impl App {
             let list_end = list_start + self.ssh_files.len() as u16;
 
             if event.column < 50 && event.row >= list_start && event.row < list_end {
-                self.selected_index = (event.row - list_start) as usize;
+                self.ssh_files_state
+                    .select(Some((event.row - list_start) as usize));
             }
         }
     }
@@ -716,7 +736,7 @@ impl App {
     fn toggle_create_ssh_key(&mut self) {
         self.show_create_form = !self.show_create_form;
         if self.show_create_form {
-            self.input_index = 0;
+            self.create_form_state.select(Some(0)); // Update to use create_form_state
         }
     }
 
@@ -762,14 +782,11 @@ impl App {
     fn create_form_layout(&self, area: Rect) -> Vec<Rect> {
         Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Length(3),
-                Constraint::Length(3),
-            ])
+            .constraints(
+                (0..FORM_FIELD_COUNT)
+                    .map(|_| Constraint::Length(3))
+                    .collect::<Vec<_>>(),
+            )
             .split(Rect::new(
                 area.x + area.width / 4,
                 area.y + area.height / 6,
@@ -780,7 +797,7 @@ impl App {
     }
 
     fn create_input_field<'a>(&self, title: &str, value: &'a str, index: usize) -> Paragraph<'a> {
-        let border_style = if self.input_index == index {
+        let border_style = if self.create_form_state.selected() == Some(index) {
             Style::default().fg(Color::Green)
         } else {
             Style::default()
@@ -804,7 +821,7 @@ impl App {
         index: usize,
     ) -> Paragraph<'a> {
         let selected_option = options[selected_index];
-        let border_style = if self.input_index == index {
+        let border_style = if self.create_form_state.selected() == Some(index) {
             Style::default().fg(Color::Green)
         } else {
             Style::default()
@@ -861,7 +878,7 @@ impl App {
         ));
         if output.status.success() {
             self.ssh_files = self.load_ssh_files();
-            self.selected_index = 0;
+            self.ssh_files_state.select(Some(0));
             self.show_create_form = false;
             self.clear_input_fields();
             self.command_log
@@ -884,7 +901,10 @@ impl App {
     }
 
     fn add_ssh_key_to_agent(&mut self) {
-        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+        if let Some(selected_file) = self
+            .ssh_files
+            .get(self.ssh_files_state.selected().unwrap_or(0))
+        {
             if !selected_file.contains(" - ") {
                 self.command_log.push(format!(
                     "Cannot add: {} is not a private key file of an SSH pair",
@@ -937,7 +957,10 @@ impl App {
     }
 
     fn confirm_delete_ssh_key(&mut self) {
-        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+        if let Some(selected_file) = self
+            .ssh_files
+            .get(self.ssh_files_state.selected().unwrap_or(0))
+        {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
             let private_key_path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
             let public_key_path = ssh_dir.join(format!("{}.pub", private_key_path.display()));
@@ -950,8 +973,14 @@ impl App {
                     "Move to trash: {} -> SSH key moved to trash",
                     private_key_path.display()
                 ));
-                self.ssh_files.remove(self.selected_index);
-                self.selected_index = self.selected_index.saturating_sub(1);
+                self.ssh_files
+                    .remove(self.ssh_files_state.selected().unwrap_or(0));
+                self.ssh_files_state.select(Some(
+                    self.ssh_files_state
+                        .selected()
+                        .unwrap_or(0)
+                        .saturating_sub(1),
+                ));
             } else {
                 let other_file_path = ssh_dir.join(selected_file);
                 if delete(&other_file_path).is_ok() {
@@ -959,15 +988,24 @@ impl App {
                         "Move to trash: {} -> SSH key moved to trash",
                         other_file_path.display()
                     ));
-                    self.ssh_files.remove(self.selected_index);
-                    self.selected_index = self.selected_index.saturating_sub(1);
+                    self.ssh_files
+                        .remove(self.ssh_files_state.selected().unwrap_or(0));
+                    self.ssh_files_state.select(Some(
+                        self.ssh_files_state
+                            .selected()
+                            .unwrap_or(0)
+                            .saturating_sub(1),
+                    ));
                 }
             }
         }
     }
 
     fn copy_ssh_key_to_clipboard(&mut self) {
-        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+        if let Some(selected_file) = self
+            .ssh_files
+            .get(self.ssh_files_state.selected().unwrap_or(0))
+        {
             if !selected_file.contains(" - ") {
                 self.command_log.push(format!(
                     "Cannot copy: {} is not a public key file of an SSH pair",
@@ -999,7 +1037,10 @@ impl App {
     }
 
     fn remove_ssh_key_from_agent(&mut self) {
-        if let Some(selected_file) = self.ssh_files.get(self.selected_index) {
+        if let Some(selected_file) = self
+            .ssh_files
+            .get(self.ssh_files_state.selected().unwrap_or(0))
+        {
             if !selected_file.contains(" - ") {
                 self.command_log.push(format!(
                     "Cannot remove: {} is not a private key file of an SSH pair",
