@@ -2,6 +2,7 @@ use arboard::Clipboard;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use dirs;
+use ratatui::style::Stylize;
 use ratatui::widgets::{Clear, List, ListItem, ListState, Padding, Wrap};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -52,6 +53,7 @@ pub struct App {
     running: bool,
     selected_index: usize,
     ssh_files: Vec<String>,
+    ssh_files_state: ListState,
     show_key_bindings: bool,
     show_confirm_delete: bool,
     show_create_form: bool,
@@ -72,10 +74,13 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let mut ssh_files_state = ListState::default();
+        ssh_files_state.select(Some(0));
         Self {
             running: true,
             selected_index: 0,
             ssh_files: Vec::new(),
+            ssh_files_state,
             show_key_bindings: false,
             show_confirm_delete: false,
             show_create_form: false,
@@ -175,7 +180,7 @@ impl App {
     }
 
     fn render_ssh_files(&self, frame: &mut Frame, area: Rect) {
-        let ssh_text = self
+        let items: Vec<ListItem> = self
             .ssh_files
             .iter()
             .enumerate()
@@ -189,24 +194,29 @@ impl App {
                 } else {
                     Style::default().fg(Color::DarkGray)
                 };
-                Line::from(file.to_string()).style(style)
+                ListItem::new(file.to_string()).style(style)
             })
-            .collect::<Vec<_>>();
+            .collect();
 
         let current_selection_info =
-            format!("{} of {}", self.selected_index + 1, self.ssh_files.len());
+            format!("|{} of {}|", self.selected_index + 1, self.ssh_files.len());
 
-        frame.render_widget(
-            Paragraph::new(ssh_text).block(
-                Block::default()
-                    .borders(ratatui::widgets::Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title("SSH Files")
-                    .title_alignment(Alignment::Left)
-                    .title_bottom(Line::from(current_selection_info).alignment(Alignment::Right)),
-            ),
-            area,
-        );
+        let list = List::new(items)
+            .block(
+                Block::bordered()
+                    .border_style(Style::default().fg(Color::Rgb(100, 100, 100)))
+                    .title(
+                        "SSH Files"
+                            .fg(Color::Reset)
+                            .bold()
+                            .underlined()
+                            .into_centered_line(),
+                    )
+                    .title_bottom(Line::from(current_selection_info).alignment(Alignment::Center)),
+            )
+            .highlight_style(Style::default().fg(Color::Magenta).slow_blink())
+            .highlight_symbol("➤ ");
+        frame.render_stateful_widget(list, area, &mut self.ssh_files_state.clone());
     }
 
     fn render_ssh_content(&self, frame: &mut Frame, area: Rect) {
@@ -214,9 +224,10 @@ impl App {
         frame.render_widget(
             Paragraph::new(ssh_content).wrap(Wrap { trim: true }).block(
                 Block::default()
+                    .border_style(Style::default().fg(Color::Rgb(100, 100, 100)))
                     .borders(ratatui::widgets::Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("SSH Content")
+                    .title("SSH Content".fg(Color::White).bold())
                     .title_alignment(Alignment::Center),
             ),
             area,
@@ -229,8 +240,9 @@ impl App {
             Paragraph::new(agent_status).block(
                 Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(100, 100, 100)))
                     .border_type(BorderType::Rounded)
-                    .title("SSH Agent Status")
+                    .title("SSH Agent Status".fg(Color::White).bold())
                     .title_alignment(Alignment::Center),
             ),
             area,
@@ -247,8 +259,9 @@ impl App {
             Paragraph::new(command_log_text).block(
                 Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(100, 100, 100)))
                     .border_type(BorderType::Rounded)
-                    .title("Command Log")
+                    .title("Command Log".fg(Color::White).bold())
                     .title_alignment(Alignment::Center),
             ),
             area,
@@ -265,8 +278,9 @@ impl App {
             Paragraph::new(footer_text).block(
                 Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(100, 100, 100)))
                     .border_type(BorderType::Rounded)
-                    .title("Information")
+                    .title("Information".fg(Color::White).bold())
                     .title_alignment(Alignment::Center),
             ),
             area,
@@ -477,12 +491,14 @@ impl App {
     fn increase_selected_index(&mut self) {
         if self.selected_index < self.ssh_files.len().saturating_sub(1) {
             self.selected_index += 1;
+            self.ssh_files_state.select(Some(self.selected_index));
         }
     }
 
     fn decrease_selected_index(&mut self) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
+            self.ssh_files_state.select(Some(self.selected_index));
         }
     }
 
