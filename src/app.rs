@@ -3,7 +3,10 @@ use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use dirs;
 use ratatui::style::Stylize;
-use ratatui::widgets::{Clear, List, ListItem, ListState, Padding, Wrap};
+use ratatui::widgets::{
+    Clear, List, ListItem, ListState, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Wrap,
+};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
@@ -226,6 +229,20 @@ impl App {
             .highlight_style(Style::default().fg(Color::Magenta).slow_blink())
             .highlight_symbol("➤ ");
         frame.render_stateful_widget(list, area, &mut self.ssh_files_state.clone());
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        let mut scrollbar_state = ScrollbarState::new(self.ssh_files.len())
+            .position(self.ssh_files_state.selected().unwrap_or_default());
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
     }
 
     fn render_ssh_content(&self, frame: &mut Frame, area: Rect) {
