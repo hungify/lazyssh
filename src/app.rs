@@ -1,7 +1,7 @@
 use arboard::Clipboard;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use dirs;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Stylize;
 use ratatui::widgets::{
     Clear, List, ListItem, ListState, Padding, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -21,6 +21,8 @@ use std::iter::FromIterator;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use trash::delete;
+
+use crate::event::{EventHandler, TerminalEvent};
 
 const FORM_FIELD_COUNT: usize = 6;
 
@@ -58,6 +60,8 @@ pub struct App {
     running: bool,
     command_log: Vec<String>,
 
+    event_handler: EventHandler,
+
     ssh_files: Vec<String>,
     ssh_files_state: ListState,
 
@@ -80,8 +84,8 @@ pub struct App {
     key_bindings: KeyBindings,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    pub fn new(event_handler: EventHandler) -> Self {
         let mut ssh_files_state = ListState::default();
         ssh_files_state.select(Some(0));
         let mut create_form_state = ListState::default();
@@ -91,6 +95,8 @@ impl Default for App {
 
             ssh_files: Vec::new(),
             ssh_files_state,
+
+            event_handler,
 
             show_confirm_delete: false,
             command_log: Vec::new(),
@@ -118,19 +124,21 @@ impl Default for App {
             create_form_state,
         }
     }
-}
-
-impl App {
-    pub fn new() -> Self {
-        Self::default()
-    }
 
     pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
         self.ssh_files = self.load_ssh_files();
         while self.running {
             terminal.draw(|frame| self.draw(frame))?;
-            self.handle_crossterm_events()?;
+            let event = self.event_handler.next()?;
+            match event {
+                TerminalEvent::Tick => {}
+                TerminalEvent::Key(key_event) => {
+                    self.on_key_event(key_event);
+                }
+                TerminalEvent::Mouse(_) => {}
+                TerminalEvent::Resize(_, _) => {}
+            }
         }
         Ok(())
     }
@@ -234,11 +242,25 @@ impl App {
             .highlight_symbol("➤ ");
         frame.render_stateful_widget(list, area, &mut self.ssh_files_state.clone());
 
+        self.render_scrollbar(
+            frame,
+            area,
+            self.ssh_files.len(),
+            self.ssh_files_state.selected().unwrap_or_default(),
+        );
+    }
+
+    fn render_scrollbar(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        total_items: usize,
+        selected_index: usize,
+    ) {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
-        let mut scrollbar_state = ScrollbarState::new(self.ssh_files.len())
-            .position(self.ssh_files_state.selected().unwrap_or_default());
+        let mut scrollbar_state = ScrollbarState::new(total_items).position(selected_index);
         frame.render_stateful_widget(
             scrollbar,
             area.inner(Margin {
@@ -506,17 +528,6 @@ impl App {
         }
     }
 
-    fn handle_crossterm_events(&mut self) -> Result<()> {
-        if event::poll(std::time::Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key) => self.on_key_event(key),
-                Event::Mouse(_) => {}
-                Event::Resize(_, _) => {}
-            }
-        }
-        Ok(())
-    }
-
     fn toggle_keybindings(&mut self) {
         self.show_key_bindings = !self.show_key_bindings;
     }
@@ -667,7 +678,7 @@ impl App {
             let key_binding = &self.key_bindings.items[selected];
             self.handle_general_key_event(KeyEvent::new(
                 KeyCode::Char(key_binding.keycode),
-                event::KeyModifiers::NONE,
+                KeyModifiers::NONE,
             ));
             self.toggle_keybindings();
         }
@@ -701,6 +712,34 @@ impl App {
         self.key_bindings.state.select(Some(i));
     }
 
+    fn select_next_ssh_file(&mut self) {
+        let i = match self.ssh_files_state.selected() {
+            Some(i) => {
+                if i >= self.ssh_files.len() - 1 {
+                    i
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.ssh_files_state.select(Some(i));
+    }
+
+    fn select_previous_ssh_file(&mut self) {
+        let i = match self.ssh_files_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    0
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.ssh_files_state.select(Some(i));
+    }
+
     fn handle_general_key_event(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (_, KeyCode::Char('q')) => self.quit(),
@@ -710,8 +749,8 @@ impl App {
             (_, KeyCode::Char('d')) => self.toggle_confirm_delete(),
             (_, KeyCode::Char('c')) => self.copy_ssh_key_to_clipboard(),
             (_, KeyCode::Char('r')) => self.remove_ssh_key_from_agent(),
-            (_, KeyCode::Down) => self.ssh_files_state.select_next(),
-            (_, KeyCode::Up) => self.ssh_files_state.select_previous(),
+            (_, KeyCode::Down) => self.select_next_ssh_file(),
+            (_, KeyCode::Up) => self.select_previous_ssh_file(),
             _ => {}
         }
     }
@@ -723,7 +762,7 @@ impl App {
     fn toggle_create_ssh_key(&mut self) {
         self.show_create_form = !self.show_create_form;
         if self.show_create_form {
-            self.create_form_state.select(Some(0)); // Update to use create_form_state
+            self.create_form_state.select(Some(0));
         }
     }
 
