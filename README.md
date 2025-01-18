@@ -39,6 +39,15 @@ Run the application:
 lazyssh
 ```
 
+## Uninstallation
+
+To uninstall `lazyssh`, run the following command:
+
+```sh
+rm -rf $HOME/.lazyssh
+echo "lazyssh has been uninstalled from $HOME/.lazyssh"
+```
+
 ## License
 
 This project is licensed under the MIT license. See the [LICENSE](./LICENSE) file for more details.
