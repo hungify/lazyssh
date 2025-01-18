@@ -183,7 +183,7 @@ impl App {
     fn create_content_layout(&self, area: Rect) -> Vec<Rect> {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
+            .constraints([Constraint::Percentage(25), Constraint::Percentage(75)].as_ref())
             .split(area)
             .to_vec()
     }
@@ -200,22 +200,36 @@ impl App {
             .to_vec()
     }
 
+    fn truncate_with_ellipsis(&self, text: &str, max_width: usize) -> String {
+        let visible_end_length = max_width - 10;
+        if text.len() <= visible_end_length {
+            return text.to_string();
+        }
+
+        let half_width = (visible_end_length) / 2;
+        let remainder = (visible_end_length) % 2;
+
+        let start = &text[..half_width];
+        let end = &text[text.len() - (half_width + remainder)..];
+
+        format!("{}...{}", start, end)
+    }
+
     fn render_ssh_files(&self, frame: &mut Frame, area: Rect) {
+        let available_width = area.width as usize;
+
         let items: Vec<ListItem> = self
             .ssh_files
             .iter()
-            .enumerate()
-            .map(|(i, file)| {
-                let style = if self.ssh_files_state.selected() == Some(i) {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                } else if file.contains(" - ") {
+            .map(|file| {
+                let ellipsis_file = self.truncate_with_ellipsis(file, available_width);
+
+                let style = if file.ends_with(".pub") {
                     Style::default()
                 } else {
                     Style::default().fg(Color::DarkGray)
                 };
-                ListItem::new(file.to_string()).style(style)
+                ListItem::new(ellipsis_file.to_string()).style(style)
             })
             .collect();
 
@@ -240,6 +254,7 @@ impl App {
             )
             .highlight_style(Style::default().fg(Color::Magenta).slow_blink())
             .highlight_symbol("➤ ");
+
         frame.render_stateful_widget(list, area, &mut self.ssh_files_state.clone());
 
         self.render_scrollbar(
