@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build project
+        run: cargo build --release
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v3
+        with:
+          name: my_project_binary
+          path: target/release/my_project
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: target/release/my_project
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
