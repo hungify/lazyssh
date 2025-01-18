@@ -447,7 +447,7 @@ impl App {
             }
             let mut ssh_files: Vec<String> = private_keys
                 .intersection(&public_keys)
-                .map(|key| format!("{} - {}.pub", key, key))
+                .map(|key| format!("{}.pub", key))
                 .collect();
             ssh_files.extend(private_keys.difference(&public_keys).cloned());
             ssh_files.extend(
@@ -468,13 +468,7 @@ impl App {
             .ssh_files
             .get(self.ssh_files_state.selected().unwrap_or(0))
         {
-            let file_name = selected_file.split(" - ").next().unwrap();
-            let path = if selected_file.contains(" - ") {
-                ssh_dir.join(format!("{}.pub", file_name))
-            } else {
-                ssh_dir.join(file_name)
-            };
-
+            let path = ssh_dir.join(selected_file);
             read_to_string(path).unwrap_or_else(|_| "Failed to read file content".to_string())
         } else {
             "No file selected".to_string()
@@ -487,10 +481,7 @@ impl App {
             .get(self.ssh_files_state.selected().unwrap_or(0))
         {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let path = ssh_dir.join(format!(
-                "{}.pub",
-                selected_file.split(" - ").next().unwrap()
-            ));
+            let path = ssh_dir.join(selected_file);
             if path.exists() {
                 match self.get_fingerprint(&path) {
                     Ok(fingerprint) => {
@@ -946,7 +937,7 @@ impl App {
             .ssh_files
             .get(self.ssh_files_state.selected().unwrap_or(0))
         {
-            if !selected_file.contains(" - ") {
+            if !selected_file.ends_with(".pub") {
                 self.command_log.push(format!(
                     "Cannot add: {} is not a private key file of an SSH pair",
                     selected_file
@@ -955,7 +946,7 @@ impl App {
             }
 
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
+            let path = ssh_dir.join(selected_file.trim_end_matches(".pub"));
 
             match self.get_fingerprint(&path) {
                 Ok(fingerprint) => {
@@ -1003,8 +994,8 @@ impl App {
             .get(self.ssh_files_state.selected().unwrap_or(0))
         {
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let private_key_path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
-            let public_key_path = ssh_dir.join(format!("{}.pub", private_key_path.display()));
+            let private_key_path = ssh_dir.join(selected_file.trim_end_matches(".pub"));
+            let public_key_path = ssh_dir.join(selected_file);
 
             let private_key_deleted = delete(&private_key_path).is_ok();
             let public_key_deleted = delete(&public_key_path).is_ok();
@@ -1047,7 +1038,7 @@ impl App {
             .ssh_files
             .get(self.ssh_files_state.selected().unwrap_or(0))
         {
-            if !selected_file.contains(" - ") {
+            if !selected_file.ends_with(".pub") {
                 self.command_log.push(format!(
                     "Cannot copy: {} is not a public key file of an SSH pair",
                     selected_file
@@ -1056,10 +1047,7 @@ impl App {
             }
 
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let path = ssh_dir.join(format!(
-                "{}.pub",
-                selected_file.split(" - ").next().unwrap()
-            ));
+            let path = ssh_dir.join(selected_file);
             match read_to_string(&path) {
                 Ok(content) => {
                     let mut clipboard = Clipboard::new().unwrap();
@@ -1082,7 +1070,7 @@ impl App {
             .ssh_files
             .get(self.ssh_files_state.selected().unwrap_or(0))
         {
-            if !selected_file.contains(" - ") {
+            if !selected_file.ends_with(".pub") {
                 self.command_log.push(format!(
                     "Cannot remove: {} is not a private key file of an SSH pair",
                     selected_file
@@ -1091,7 +1079,7 @@ impl App {
             }
 
             let ssh_dir = dirs::home_dir().unwrap().join(".ssh");
-            let path = ssh_dir.join(selected_file.split(" - ").next().unwrap());
+            let path = ssh_dir.join(selected_file.trim_end_matches(".pub"));
 
             match self.get_fingerprint(&path) {
                 Ok(fingerprint) => {
