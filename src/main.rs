@@ -1,10 +1,26 @@
-use lazyssh::*;
+use clap::Parser;
+use cli::Cli;
+use color_eyre::Result;
 
-fn main() -> color_eyre::Result<()> {
-    color_eyre::install()?;
-    let terminal = ratatui::init();
-    let event_handler = event::EventHandler::new();
-    let result = app::App::new(event_handler).run(terminal);
-    ratatui::restore();
-    result
+use crate::app::App;
+
+mod action;
+mod app;
+mod cli;
+mod components;
+mod config;
+mod errors;
+mod event;
+mod logging;
+mod tui;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    crate::errors::init()?;
+    crate::logging::init()?;
+
+    let args = Cli::parse();
+    let mut app = App::new(args.tick_rate, args.frame_rate)?;
+    app.run().await?;
+    Ok(())
 }
